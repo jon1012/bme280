@@ -84,10 +84,13 @@ def read_adc():
 
 def read_all():
     data = read_adc()
+    temp = read_temperature(data)
+    humi = read_humidity(data)
+    pres = read_pressure(data)
     return Data(
-        read_humidity(data),
-        read_pressure(data),
-        read_temperature(data)
+        humi,
+        pres,
+        temp
     )
 
 
@@ -117,35 +120,39 @@ def read_temperature(data=None):
 
 
 def compensate_pressure(adc_p):
-    v1 = (t_fine / 2.0) - 64000.0
-    v2 = (((v1 / 4.0) * (v1 / 4.0)) / 2048) * calibration_p[5]
-    v2 += ((v1 * calibration_p[4]) * 2.0)
-    v2 = (v2 / 4.0) + (calibration_p[3] * 65536.0)
-    v1 = (((calibration_p[2] * (((v1 / 4.0) * (v1 / 4.0)) / 8192)) / 8) + ((calibration_p[1] * v1) / 2.0)) / 262144
-    v1 = ((32768 + v1) * calibration_p[0]) / 32768
+    global t_fine
+    
+    v1 = (float(t_fine) / 2.0) - 64000.0
+    v2 = v1 * v1 * float(calibration_p[5]) / 32768.0
+    v2 = v2 + v1 * float(calibration_p[4]) * 2.0
+    v2 = (v2 / 4.0) + (float(calibration_p[3]) * 65536.0)
+    v1 = (float(calibration_p[2]) * v1 * v1 / 524288.0 + float(calibration_p[1]) * v1) / 524288.0
+    v1 = (1.0 + v1 / 32768.0) * float(calibration_p[0])
 
     if v1 == 0:
-        return 0
+        return 0.0
 
-    pressure = ((1048576 - adc_p) - (v2 / 4096)) * 3125
-    if pressure < 0x80000000:
-        pressure = (pressure * 2.0) / v1
-    else:
-        pressure = (pressure / v1) * 2
-
-    v1 = (calibration_p[8] * (((pressure / 8.0) * (pressure / 8.0)) / 8192.0)) / 4096
-    v2 = ((pressure / 4.0) * calibration_p[7]) / 8192.0
-    pressure += ((v1 + v2 + calibration_p[6]) / 16.0)
+    pressure = 1048576.0 - float(adc_p)
+    
+    pressure = (pressure - (v2 / 4096.0)) * 6250.0 / v1
+    
+    v1 = float(calibration_p[8]) * pressure * pressure / 2147483648.0
+    v2 = pressure * float(calibration_p[7]) / 32768.0
+    pressure = pressure + (v1 + v2 + float(calibration_p[6])) / 16.0
 
     return pressure / 100
+    
 
 
 def compensate_temperature(adc_t):
     global t_fine
-    v1 = (adc_t / 16384.0 - calibration_t[0] / 1024.0) * calibration_t[1]
-    v2 = (adc_t / 131072.0 - calibration_t[0] / 8192.0) * (adc_t / 131072.0 - calibration_t[0] / 8192.0) * calibration_t[2]
+    
+    # Old implementation :
+    v1 = (float(adc_t) / 16384.0 - float(calibration_t[0]) / 1024.0) * float(calibration_t[1])
+    v2 = (float(adc_t) / 131072.0 - float(calibration_t[0]) / 8192.0) * (float(adc_t) / 131072.0 - float(calibration_t[0]) / 8192.0) * float(calibration_t[2])
     t_fine = v1 + v2
     temperature = t_fine / 5120.0
+    
     return temperature
 
 
@@ -172,12 +179,12 @@ def setup():
     if setup_run:
         return
 
-    osrs_t = 1  # Temperature oversampling x 1
-    osrs_p = 1  # Pressure oversampling x 1
-    osrs_h = 1  # Humidity oversampling x 1
+    osrs_t = 0b101  # Temperature oversampling x 1
+    osrs_p = 0b101  # Pressure oversampling x 1
+    osrs_h = 0b101  # Humidity oversampling x 1
     mode = 3  # Normal mode
-    t_sb = 5  # Tstandby 1000ms
-    filter = 0  # Filter off
+    t_sb = 0  # Tstandby 0.5ms
+    filter = 0b100  # Filter on: 16
     spi3w_en = 0  # 3-wire SPI Disable
 
     ctrl_meas_reg = (osrs_t << 5) | (osrs_p << 2) | mode
